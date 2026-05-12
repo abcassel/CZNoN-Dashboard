@@ -13,7 +13,7 @@ METRIC_COLORS = {
     'Views': '#3B82F6',    # Blue
     'Followers': '#8B5CF6' # Purple
 }
-# Custom weights for CZ-NoN (Monthly high-level data)
+# Weighted Logic
 WEIGHTS = {'monthly reads': 1, 'total clicks': 2, 'total views': 0.1}
 
 # 2. Custom Styling
@@ -25,7 +25,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3. Data Processing (Parsing the horizontal layout)
+# 3. Data Processing
 @st.cache_data
 def load_and_clean_data():
     df_raw = pd.read_csv('CZ NoN Metrics - Sheet1.csv')
@@ -63,7 +63,11 @@ def load_and_clean_data():
     df['Date'] = pd.to_datetime(df['Date'], format='%Y %m')
     return df
 
-df_clean = load_and_clean_data()
+try:
+    df_clean = load_and_clean_data()
+except Exception as e:
+    st.error(f"Error loading CSV: {e}")
+    st.stop()
 
 # 4. Sidebar: Control Panel
 st.sidebar.title("📊 Control Panel")
@@ -86,64 +90,66 @@ else:
     df_f = df_clean.copy()
 
 # Score Calculation
-def get_points(row):
-    return row['Value'] * WEIGHTS.get(row['Metric'], 0)
+df_f['Points'] = df_f.apply(lambda r: r['Value'] * WEIGHTS.get(r['Metric'], 0), axis=1)
 
-df_f['Points'] = df_f.apply(get_points, axis=1)
-
-# 5. Header & Primary KPIs
+# 5. Header & Primary KPIs (Updated Order)
 st.title("🛰️ CZ-NoN engagement matrix")
 st.markdown(f"[🦋 Bluesky](https://bsky.app/profile/cznews.bsky.social)  •  [✉️ Substack](https://criticalzonenews.substack.com/)")
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Total Dataset Downloads", "13") # Dummy value
-
+# KPI Calculations
+bs_followers = df_f[df_f['Metric'] == 'followers']['Value'].iloc[-1] if not df_f.empty else 0
 total_reads = df_f[df_f['Metric'] == 'monthly reads']['Value'].sum()
-total_clicks = df_f[df_f['Metric'] == 'total clicks']['Value'].sum()
+bitly_clicks = df_f[df_f['Metric'] == 'total clicks']['Value'].sum()
 avg_subs_pts = df_f[df_f['Platform'] == 'Substack'].groupby('Date')['Points'].sum().mean()
 
-c2.metric("Total Reads (SS)", f"{total_reads:,.0f}")
-c3.metric("Total Clicks (Bitly)", f"{total_clicks:,.0f}")
-c4.metric("Avg Monthly SS Engagement Points", f"{avg_subs_pts:.1f}")
-c5.metric("Current BS Followers", f"{df_f[df_f['Platform'] == 'Bluesky']['Value'].iloc[-1]:.0f}")
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Bluesky Followers", f"{bs_followers:,.0f}")
+k2.metric("Substack Total Reads", f"{total_reads:,.0f}")
+k3.metric("Bitly Clicks", f"{bitly_clicks:,.0f}")
+k4.metric("Avg Substack Engagement Points", f"{avg_subs_pts:.1f}")
 
 st.markdown("---")
 
-# 6. Overall Performance Section
-st.header("📈 Overall Monthly Performance")
-agg_points = df_f.groupby('Date')['Points'].sum().reset_index()
-fig_trend = px.line(agg_points, x='Date', y='Points', title="Total Weighted Engagement Points Over Time",
-                    line_shape='spline')
-fig_trend.update_traces(line_color='#1E293B', line_width=4)
+# 6. Detailed Engagement Trend
+st.header("📈 Monthly Weighted Engagement Details")
+
+# Aggregate Points and include Monthly Reads/Clicks for hover detail
+agg_trend = df_f.groupby('Date').agg({
+    'Points': 'sum',
+    'Value': lambda x: x[df_f.loc[x.index, 'Metric'] == 'monthly reads'].sum()
+}).reset_index().rename(columns={'Value': 'Raw Reads'})
+
+fig_trend = px.line(agg_trend, x='Date', y='Points', 
+                    title="Total Engagement Points (Weighted)",
+                    markers=True, 
+                    line_shape='spline',
+                    hover_data={'Date': '|%b %Y', 'Points': ':.2f', 'Raw Reads': ':,.0f'})
+
+fig_trend.update_traces(line_color='#1E293B', line_width=4, marker=dict(size=10, color='#1E293B'))
+fig_trend.update_layout(
+    xaxis_title="Month",
+    yaxis_title="Total Engagement Points",
+    hovermode="x unified"
+)
 st.plotly_chart(fig_trend, use_container_width=True)
 
-# 7. Platform Breakdown
-col_bs, col_ss = st.columns(2)
+# 7. Platform Specifics
+col_left, col_right = st.columns(2)
 
-with col_bs:
-    st.subheader("🦋 Bluesky Reach")
+with col_left:
+    st.subheader("🦋 Bluesky Growth")
     bs_data = df_f[df_f['Platform'] == 'Bluesky']
-    fig_bs = px.area(bs_data, x='Date', y='Value', title="Follower Growth Trend",
+    fig_bs = px.area(bs_data, x='Date', y='Value', title="Cumulative Follower Growth",
                     color_discrete_sequence=[METRIC_COLORS['Followers']])
     st.plotly_chart(fig_bs, use_container_width=True)
 
-with col_ss:
-    st.subheader("✉️ Substack Insights")
-    ss_pivot = df_f[df_f['Platform'] == 'Substack'].pivot(index='Date', columns='Metric', values='Value').reset_index()
+with col_right:
+    st.subheader("✉️ Substack Interaction")
+    ss_data = df_f[df_f['Platform'] == 'Substack']
+    ss_pivot = ss_data.pivot(index='Date', columns='Metric', values='Value').reset_index()
+    
     fig_ss = go.Figure()
     fig_ss.add_trace(go.Bar(x=ss_pivot['Date'], y=ss_pivot['total views'], name='Views', marker_color=METRIC_COLORS['Views']))
     fig_ss.add_trace(go.Bar(x=ss_pivot['Date'], y=ss_pivot['monthly reads'], name='Reads', marker_color=METRIC_COLORS['Reads']))
-    fig_ss.update_layout(barmode='group', title="Views vs Reads")
+    fig_ss.update_layout(barmode='group', title="Views vs. Actual Reads")
     st.plotly_chart(fig_ss, use_container_width=True)
-
-st.markdown("---")
-
-# 8. Strategy Rose Diagram (Platform Contribution)
-st.subheader("🌹 Strategy Rose: Platform Contribution (Engagement Points)")
-rose_data = df_f.groupby('Platform')['Points'].sum().reset_index()
-fig_rose = px.bar_polar(rose_data, r="Points", theta="Platform",
-                        color="Points", template="plotly_white",
-                        color_continuous_scale=px.colors.sequential.Plasma,
-                        title="Total Engagement Points Contribution by Platform")
-fig_rose.update_layout(polar=dict(radialaxis=dict(showticklabels=False, ticks='')), height=500)
-st.plotly_chart(fig_rose, use_container_width=True)
