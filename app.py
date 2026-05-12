@@ -1,133 +1,33 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-
-# 1. Page Configuration
-st.set_page_config(page_title="CZ-NoN Engagement Matrix", layout="wide")
-
-# 2026 Industry Benchmarks for SciComm
-BENCHMARKS = {
-    'substack_open_rate': 0.44, # 44% Average
-    'bs_growth_target': 75,      # 50-100 followers/month
-    'ctr_target': 0.032,         # 3.2% for Research/Medical links
-}
-
-# 2. Custom Styling
-st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; color: #1E3A8A; }
-    .stMetric { background-color: #f8fafc; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; }
-    .benchmark-text { font-size: 0.8rem; color: #64748b; margin-top: -10px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 3. Data Processing
-@st.cache_data
-def load_and_clean_data():
-    df_raw = pd.read_csv('CZ NoN Metrics - Sheet1.csv')
-    results = []
-    # (Standard parsing logic as used previously)
-    cols_25 = [c for c in df_raw.columns if '2025' in str(c)]
-    current_platform = None
-    for idx in range(1, 9):
-        row = df_raw.iloc[idx]
-        label = str(row.iloc[0]).strip()
-        if label in ['Bluesky', 'Substack', 'Bitly']: current_platform = label; continue
-        if label == 'nan' or not label: continue
-        for col in cols_25:
-            val = row[col]
-            if pd.notna(val):
-                results.append({'Date': col, 'Platform': current_platform, 'Metric': label, 'Value': float(str(val).replace(',', ''))})
-    
-    cols_26 = [str(c) for c in df_raw.iloc[9].values[1:] if str(c) != 'nan']
-    for idx in range(11, len(df_raw)):
-        row = df_raw.iloc[idx]
-        label = str(row.iloc[0]).strip()
-        if label in ['Bluesky', 'Substack', 'Bitly']: current_platform = label; continue
-        if label == 'nan' or not label: continue
-        for i, date_label in enumerate(cols_26):
-            val = row.iloc[i+1]
-            if pd.notna(val):
-                results.append({'Date': date_label, 'Platform': current_platform, 'Metric': label, 'Value': float(str(val).replace(',', ''))})
-    
-    df = pd.DataFrame(results)
-    df['Date'] = pd.to_datetime(df['Date'], format='%Y %m')
-    return df
-
-df_f = load_and_clean_data()
-# Engagement Weights
-WEIGHTS = {'monthly reads': 1, 'total clicks': 2, 'total views': 0.1}
-df_f['Points'] = df_f.apply(lambda r: r['Value'] * WEIGHTS.get(r['Metric'], 0), axis=1)
-
-# 4. KPI Header with Benchmarks
-st.title("🛰️ CZ-NoN engagement matrix")
-st.caption("Performance vs. 2026 SciComm Industry Benchmarks")
-
-k1, k2, k3, k4 = st.columns(4)
-
-# Bluesky Logic
-curr_bs = df_f[df_f['Metric'] == 'followers']['Value'].iloc[-1]
-prev_bs = df_f[df_f['Metric'] == 'followers']['Value'].iloc[-2]
-bs_delta = curr_bs - prev_bs
-k1.metric("Bluesky Followers", f"{curr_bs:,.0f}", f"{bs_delta:+.0f} mo/mo")
-st.markdown("<p class='benchmark-text'>Target: +50-100/mo</p>", unsafe_allow_html=True)
-
-# Substack Reads Logic
-total_reads = df_f[df_f['Metric'] == 'monthly reads']['Value'].sum()
-k2.metric("Substack Total Reads", f"{total_reads:,.0f}")
-st.markdown("<p class='benchmark-text'>Avg Open Rate Benchmark: 44%</p>", unsafe_allow_html=True)
-
-# Clicks Logic
-total_clicks = df_f[df_f['Metric'] == 'total clicks']['Value'].sum()
-total_views = df_f[df_f['Metric'] == 'total views']['Value'].sum()
-ctr = (total_clicks / total_views) * 100 if total_views > 0 else 0
-k3.metric("Bitly Clicks", f"{total_clicks:,.0f}", f"{ctr:.1f}% CTR")
-st.markdown("<p class='benchmark-text'>SciComm CTR Target: 3.2%</p>", unsafe_allow_html=True)
-
-# Avg Engagement
-avg_pts = df_f.groupby('Date')['Points'].sum().mean()
-k4.metric("Avg Monthly Engagement", f"{avg_pts:.1f} pts")
-st.markdown("<p class='benchmark-text'>Weighted by Reach & Action</p>", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# 5. Informative Trend Graph
-st.header("📈 Weighted Engagement Trend")
-agg_trend = df_f.groupby('Date')['Points'].sum().reset_index()
-
-fig = go.Figure()
-
-# Add the CZ-NoN Data
-fig.add_trace(go.Scatter(
-    x=agg_trend['Date'], y=agg_trend['Points'],
-    mode='lines+markers',
-    name='Engagement Points',
-    line=dict(color='#1E3A8A', width=4),
-    marker=dict(size=10, bordercolor="white", borderwidth=2),
-    hovertemplate="<b>%{x|%B %Y}</b><br>Score: %{y:.1f} pts<extra></extra>"
-))
-
-# Add a "Growth Baseline" (Example: 2025 Average)
-baseline = agg_trend[agg_trend['Date'].dt.year == 2025]['Points'].mean()
-fig.add_hline(y=baseline, line_dash="dot", line_color="#94a3b8", 
-              annotation_text="2025 Average Baseline", annotation_position="bottom right")
-
-fig.update_layout(
-    plot_bgcolor='white',
-    hovermode="x unified",
-    xaxis=dict(showgrid=False),
-    yaxis=dict(title="Engagement Points", gridcolor='#f1f5f9'),
-    margin=dict(l=20, r=20, t=40, b=20),
-    height=450
-)
-st.plotly_chart(fig, use_container_width=True)
-
-# 6. Comparative Context
-with st.expander("ℹ️ How do these metrics compare to other outlets?"):
-    st.write("""
-    Based on 2026 digital publishing reports:
-    - **Substack:** An open rate of **44%** is considered the gold standard for independent newsletters. If your Reads/Followers ratio is high, your "stickiness" outperforms typical academic listservs.
-    - **Bluesky:** Organic growth of **75 followers/month** puts you in the top 15% of niche scientific research accounts for that platform's current scale.
-    - **CTR:** A Click-Through Rate above **3%** for research links indicates that your audience isn't just reading, they are actually accessing the data.
-    """)
+ValueError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+File "/mount/src/cznon-dashboard/app.py", line 102, in <module>
+    fig.add_trace(go.Scatter(
+                  ~~~~~~~~~~^
+        x=agg_trend['Date'], y=agg_trend['Points'],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        hovertemplate="<b>%{x|%B %Y}</b><br>Score: %{y:.1f} pts<extra></extra>"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ))
+    ^
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/graph_objs/_scatter.py", line 2797, in __init__
+    self._set_property("marker", arg, marker)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/basedatatypes.py", line 4403, in _set_property
+    _set_property_provided_value(self, name, arg, provided)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/basedatatypes.py", line 398, in _set_property_provided_value
+    obj[name] = val
+    ~~~^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/basedatatypes.py", line 4924, in __setitem__
+    self._set_compound_prop(prop, value)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/basedatatypes.py", line 5335, in _set_compound_prop
+    val = validator.validate_coerce(val, skip_invalid=self._skip_invalid)
+File "/home/adminuser/venv/lib/python3.14/site-packages/_plotly_utils/basevalidators.py", line 2468, in validate_coerce
+    v = self.data_class(v, skip_invalid=skip_invalid, _validate=_validate)
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/graph_objs/scatter/_marker.py", line 1129, in __init__
+    self._process_kwargs(**dict(arg, **kwargs))
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.14/site-packages/plotly/basedatatypes.py", line 4451, in _process_kwargs
+    raise err
